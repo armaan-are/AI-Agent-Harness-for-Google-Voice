@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp } from './app.js'
 import { ElevenLabs, FileSecrets } from './eleven.js'
+import { DatabaseSync } from 'node:sqlite'
 import { Store } from './store.js'
 
 const dev = process.argv.includes('--dev')
@@ -21,6 +22,14 @@ if (existsSync(dbPath)) {
   const stat = lstatSync(dbPath)
   if (!stat.isFile() || stat.uid !== process.getuid?.()) throw new Error('VoicePilot requires a regular database file that you own.')
   chmodSync(dbPath, 0o600)
+}
+const runtimeLock = new DatabaseSync(join(root, 'runtime-lock.sqlite'))
+try {
+  runtimeLock.exec('PRAGMA busy_timeout = 0; CREATE TABLE IF NOT EXISTS runtime_lock (placeholder INTEGER); BEGIN EXCLUSIVE')
+} catch (error) {
+  runtimeLock.close()
+  if (error instanceof Error && /locked/i.test(error.message)) throw new Error('VoicePilot is already using this data directory.')
+  throw error
 }
 const store = new Store(dbPath)
 store.prune()
@@ -41,6 +50,14 @@ const vite = dev ? await (await import('vite')).createServer({
 if (vite) local.app.use(vite.middlewares)
 else {
   const assets = fileURLToPath(new URL('../../web/', import.meta.url))
+  local.app.use((_req, res, next) => {
+    res.set('Content-Security-Policy', [
+      "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data:",
+      "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'",
+      `connect-src 'self' ws://localhost:${port} ws://127.0.0.1:${port} wss://api.elevenlabs.io`,
+    ].join('; '))
+    next()
+  })
   local.app.use(express.static(assets))
   local.app.get('/{*path}', (_req, res) => res.sendFile(join(assets, 'index.html')))
 }
@@ -60,6 +77,7 @@ async function stop(code: number) {
   await vite?.close()
   await local.close()
   store.db.close()
+  runtimeLock.close()
   process.exitCode = code
 }
 process.once('SIGINT', () => void stop(0))

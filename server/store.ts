@@ -34,6 +34,7 @@ export class Store {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
+      PRAGMA secure_delete = ON;
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS calls (
         id TEXT PRIMARY KEY, started INTEGER NOT NULL, ended INTEGER, data TEXT NOT NULL
@@ -44,6 +45,9 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS calls_started ON calls(started DESC);
     `)
+    if (!this.db.prepare('PRAGMA table_info(calls)').all().some(column => column.name === 'last_seen')) {
+      this.db.exec('ALTER TABLE calls ADD COLUMN last_seen INTEGER')
+    }
     this.recover()
   }
 
@@ -60,7 +64,7 @@ export class Store {
   private save(call: CallRecord) {
     const { transcript: _transcript, ...data } = call
     this.db.prepare(`
-      INSERT INTO calls VALUES (?, ?, ?, ?)
+      INSERT INTO calls (id, started, ended, data) VALUES (?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET ended = excluded.ended, data = excluded.data
     `).run(call.id, call.startedAt, call.endedAt, JSON.stringify(data))
   }
@@ -150,9 +154,13 @@ export class Store {
     if (days) this.db.prepare('DELETE FROM calls WHERE ended < ?').run(Date.now() - days * 86400000)
   }
 
+  markAlive(id: string, time: number) {
+    this.db.prepare('UPDATE calls SET last_seen = ? WHERE id = ? AND ended IS NULL').run(time, id)
+  }
+
   recover() {
-    for (const row of this.db.prepare('SELECT id, started FROM calls WHERE ended IS NULL').all()) {
-      this.update(String(row.id), { type: 'ended', reason: 'Local server interrupted' }, Number(row.started))
+    for (const row of this.db.prepare('SELECT id, coalesce(last_seen, started) AS known_until FROM calls WHERE ended IS NULL').all()) {
+      this.update(String(row.id), { type: 'ended', reason: 'Local server interrupted' }, Number(row.known_until))
     }
   }
 }

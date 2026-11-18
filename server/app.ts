@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { z, ZodError } from 'zod'
 import { agentId, planSchema, settingsSchema, updateSchema } from '../shared/model.js'
 import { ElevenLabs, ServiceError } from './eleven.js'
+import { credentialPage } from './credentials.js'
 import { Store } from './store.js'
 
 const loopback = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
@@ -42,6 +43,15 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
     })
     next()
   })
+  app.get('/credentials', (req, res) => credentialPage(res, { saved: req.query.saved === '1' }))
+  app.post('/credentials', express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+    if (!sameOrigin(req.headers.host, req.headers.origin) ||
+        (req.get('sec-fetch-site') && req.get('sec-fetch-site') !== 'same-origin')) return res.sendStatus(403)
+    const result = z.string().trim().min(1).max(1024).regex(/^[\x21-\x7e]+$/).safeParse(req.body?.key)
+    if (!result.success) return credentialPage(res.status(400), { invalid: true })
+    eleven.secrets.set(result.data)
+    res.redirect(303, '/credentials?saved=1')
+  })
   const api = express.Router()
   app.use('/api', api)
   api.use((req, res, next) => {
@@ -59,10 +69,9 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
     notify()
     res.json({ ok: true })
   })
-  api.put('/secret', (req, res) => {
-    const { key } = z.object({ key: z.string().trim().max(1024).regex(/^[\x21-\x7e]*$/) }).parse(req.body)
-    eleven.secrets.set(key)
-    res.json({ hasKey: Boolean(key) })
+  api.delete('/secret', (_req, res) => {
+    eleven.secrets.set('')
+    res.sendStatus(204)
   })
   api.post('/agents/test', async (req, res) => {
     const { id } = z.object({ id: agentId }).parse(req.body)
@@ -150,7 +159,6 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
       let raw: unknown
       try { raw = JSON.parse(String(data)) } catch { return }
       current.lastSeen = Date.now()
-      if (typeof raw === 'object' && raw && 'type' in raw && raw.type === 'heartbeat') return
       const event = updateSchema.safeParse(raw)
       if (!event.success) return
       if (event.data.type === 'ended') {
@@ -158,7 +166,16 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
         return
       }
       const updated = store.update(current.id, event.data)
-      if (updated && event.data.type !== 'transcript') notify()
+      if (updated && event.data.type !== 'transcript') {
+        store.markAlive(current.id, current.lastSeen)
+        notify()
+      }
+    })
+    socket.on('pong', () => {
+      if (current?.owner === owner) {
+        current.lastSeen = Date.now()
+        store.markAlive(current.id, current.lastSeen)
+      }
     })
     socket.on('error', () => socket.terminate())
     socket.on('close', () => {
@@ -166,7 +183,9 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
       if (current?.owner === owner) finish('Browser session disconnected', current.lastSeen)
     })
   })
+  const retention = setInterval(() => store.prune(), 3600000).unref()
   const watchdog = setInterval(() => {
+    clients.forEach(socket => { if (socket.readyState === WebSocket.OPEN) socket.ping() })
     if (!current || Date.now() - current.lastSeen < 20000) return
     const socket = clients.get(current.owner)
     finish('Browser session heartbeat timed out', current.lastSeen)
@@ -187,6 +206,7 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
   }
   function close() {
     clearInterval(watchdog)
+    clearInterval(retention)
     finish('Local server stopped')
     clients.forEach(socket => socket.terminate())
     sockets.close()

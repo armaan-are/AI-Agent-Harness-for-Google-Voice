@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 
 export function doctor() {
@@ -29,4 +30,4 @@ export function doctor() {
   return results.every(([ok]) => ok)
 }
 
-if (process.argv[1] && import.meta.url === new URL('file://' + process.argv[1]).href) process.exitCode = doctor() ? 0 : 1
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = doctor() ? 0 : 1

@@ -85,7 +85,14 @@ test('local API and socket reject foreign origins and enforce exclusive sessions
     assert.equal(foreignHost, 403)
     const foreign = new WebSocket(wsUrl, { origin: 'https://example.com' })
     await assert.rejects(once(foreign, 'open'), /403/)
-    assert.equal((await typedFetch('/secret', 'PUT', { key: 'test-secret' })).status, 200)
+    const keyForm = await fetch(origin + '/credentials')
+    assert.match(keyForm.headers.get('content-security-policy') || '', /default-src 'none'/)
+    const nativePost = (source: string) => fetch(origin + '/credentials', {
+      method: 'POST', redirect: 'manual', headers: { origin: source }, body: new URLSearchParams({ key: 'test-secret' }),
+    })
+    assert.equal((await nativePost('https://example.com')).status, 403)
+    assert.equal((await nativePost(origin)).status, 303)
+    assert(!(await (await fetch(origin + '/credentials?saved=1')).text()).includes('test-secret'))
     assert.equal((await typedFetch('/settings', 'PUT', { agents: [{ id, name: 'Support', private: true }], selectedAgent: id, transcriptStorage: true })).status, 200)
     const settings = await (await typedFetch('/settings')).text()
     assert(!settings.includes('test-secret'))
