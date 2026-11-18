@@ -137,8 +137,9 @@ export class AudioBridge {
   }
 
   update(settings: Pick<AudioSettings, 'inputGain' | 'outputGain' | 'monitorGain' | 'echoGuard'>) {
-    this.settings = { ...this.settings, ...settings }
-    if (this.monitorGain) this.monitorGain.gain.value = settings.monitorGain
+    const { inputGain, outputGain, monitorGain, echoGuard } = settings
+    this.settings = { ...this.settings, inputGain, outputGain, monitorGain, echoGuard }
+    if (this.monitorGain) this.monitorGain.gain.value = monitorGain
     this.applyGate()
   }
 

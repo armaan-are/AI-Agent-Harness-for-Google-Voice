@@ -13,7 +13,8 @@
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "build": "npm run check && vite build && tsc -p tsconfig.server.json",
-    "start": "node --env-file-if-exists=.env dist/server/server/index.js"
+    "start": "node --env-file-if-exists=.env dist/server/server/index.js",
+    "test:browser": "node tests/chrome.mjs"
   },
   "dependencies": {
     "@elevenlabs/client": "1.37.1",
@@ -37,6 +38,7 @@
     "@types/react-dom": "^19.2.2",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.0",
+    "playwright-core": "^1.65.1",
     "tailwindcss": "^4.1.17",
     "tsx": "^4.20.6",
     "typescript": "~5.9.3",

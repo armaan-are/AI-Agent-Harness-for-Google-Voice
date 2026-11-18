@@ -43,7 +43,7 @@ export function createApp(store: Store, eleven: ElevenLabs, readiness: () => obj
     })
     next()
   })
-  app.get('/credentials', (req, res) => credentialPage(res, { saved: req.query.saved === '1' }))
+  app.get('/credentials', (req, res) => credentialPage(res, { saved: req.query.saved === '1' && Boolean(eleven.secrets.get()) }))
   app.post('/credentials', express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
     if (!sameOrigin(req.headers.host, req.headers.origin) ||
         (req.get('sec-fetch-site') && req.get('sec-fetch-site') !== 'same-origin')) return res.sendStatus(403)
